@@ -1,0 +1,19 @@
+# What `composer require` downloads: src/, generated/, README, CHANGELOG and
+# LICENSE. Tests, tooling and the development environment stay in the
+# repository.
+
+# The generated classes carry the descriptor inside them, so nothing installed
+# reads the proto. Regenerating the stubs needs it.
+/proto              export-ignore
+
+/tests              export-ignore
+/scripts            export-ignore
+/.github            export-ignore
+/docs               export-ignore
+/Dockerfile         export-ignore
+/Dockerfile.frankenphp export-ignore
+/docker-compose.yml export-ignore
+/.dockerignore      export-ignore
+/phpunit.xml        export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore

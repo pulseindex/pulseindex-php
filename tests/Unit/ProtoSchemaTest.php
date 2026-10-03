@@ -1,0 +1,276 @@
+<?php
+
+declare(strict_types=1);
+
+namespace PulseIndex\Tests\Unit;
+
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use PulseIndex\Tests\Support\ProtoSchema;
+
+/**
+ * Regression guard for `proto/engine.proto`.
+ *
+ * The proto still declares exactly the schema this SDK and its generated stubs
+ * were built against. Any field added, removed, renamed, renumbered or retyped,
+ * and any RPC change, fails here until the fixture below is updated, which puts
+ * the change in the diff where a reviewer sees precisely what moved.
+ */
+final class ProtoSchemaTest extends TestCase
+{
+    private const PROTO = __DIR__ . '/../../proto/engine.proto';
+
+    /** @return array{rpcs: list<string>, messages: array<string, list<string>>, enums: array<string, list<string>>} */
+    private static function expected(): array
+    {
+        return [
+            'rpcs' => [
+                'IndexEntity(IndexEntityRequest) -> IndexEntityResponse',
+                'BatchIndexEntities(BatchIndexEntitiesRequest) -> BatchIndexEntitiesResponse',
+                'DeleteEntity(DeleteEntityRequest) -> DeleteEntityResponse',
+                'BatchDeleteEntities(BatchDeleteEntitiesRequest) -> BatchDeleteEntitiesResponse',
+                'Search(SearchQueryRequest) -> SearchQueryResponse',
+            ],
+            'messages' => [
+                'IndexEntityRequest' => [
+                    '1:uint64 entity_id',
+                    '6:map<string, int64> numbers',
+                    '7:map<string, GeoPoint> points',
+                    '4:repeated string categories',
+                    '5:string tenant_id',
+                ],
+                'IndexEntityResponse' => ['1:bool success'],
+                'BatchIndexEntitiesRequest' => ['1:repeated IndexEntityRequest entities'],
+                'BatchIndexEntitiesResponse' => ['1:uint32 indexed_count'],
+                'DeleteEntityRequest' => ['1:uint64 entity_id', '2:string tenant_id'],
+                'DeleteEntityResponse' => ['1:bool success'],
+                'BatchDeleteEntitiesRequest' => ['1:repeated uint64 entity_ids', '2:string tenant_id'],
+                'BatchDeleteEntitiesResponse' => ['1:uint32 deleted_count'],
+                'FilterPredicate' => ['1:Operation op', '2:string attribute', '3:uint32 group'],
+                'RangePredicate' => ['1:string field', '2:int64 min_val', '3:int64 max_val'],
+                'GeoPoint' => ['1:double lat', '2:double lon'],
+                'GeoPredicate' => [
+                    '1:string field',
+                    '2:double lat',
+                    '3:double lon',
+                    '4:double radius_km',
+                ],
+                'SortSpec' => ['1:string field', '2:bool descending', '3:bool by_distance'],
+                'SearchQueryRequest' => [
+                    '2:repeated FilterPredicate filters',
+                    '3:repeated RangePredicate ranges',
+                    '4:uint32 limit',
+                    '5:uint32 offset',
+                    '6:string tenant_id',
+                    '7:SortSpec sort',
+                    '8:bool exact_total',
+                    '9:GeoPredicate geo',
+                ],
+                'SearchQueryResponse' => [
+                    '1:repeated uint64 matched_entity_ids',
+                    '2:uint32 total_matches',
+                    '3:uint64 execution_time_us',
+                    '4:bool total_is_exact',
+                ],
+            ],
+            'enums' => [
+                'FilterPredicate.Operation' => ['MUST=0', 'SHOULD=1', 'MUST_NOT=2'],
+            ],
+        ];
+    }
+
+    private static function actual(): ProtoSchema
+    {
+        $path = realpath(self::PROTO);
+        self::assertIsString($path, 'proto/engine.proto is missing');
+
+        return ProtoSchema::parse((string) file_get_contents($path));
+    }
+
+    /** An RPC the service has and this copy lacks is reported unless named. */
+    public function test_an_rpc_missing_from_the_vendored_copy_is_reported(): void
+    {
+        $engine = ProtoSchema::parse(<<<'PROTO'
+            service SearchEngineService {
+              rpc Search (SearchQueryRequest) returns (SearchQueryResponse);
+              rpc BatchDeleteEntities (BatchDeleteEntitiesRequest) returns (BatchDeleteEntitiesResponse);
+            }
+            message SearchQueryRequest { uint32 limit = 1; }
+            message SearchQueryResponse { uint32 total_matches = 1; }
+            message BatchDeleteEntitiesRequest { repeated uint64 entity_ids = 1; }
+            message BatchDeleteEntitiesResponse { uint32 deleted_count = 1; }
+            PROTO);
+
+        $vendored = ProtoSchema::parse(<<<'PROTO'
+            service SearchEngineService {
+              rpc Search (SearchQueryRequest) returns (SearchQueryResponse);
+            }
+            message SearchQueryRequest { uint32 limit = 1; }
+            message SearchQueryResponse { uint32 total_matches = 1; }
+            PROTO);
+
+        $diff = ProtoSchema::subsetDiff($engine, $vendored, ['Internal']);
+
+        self::assertNotEmpty($diff, 'a forgotten RPC must not pass');
+        self::assertStringContainsString('BatchDeleteEntities', implode("\n", $diff));
+    }
+
+    /** A named omission passes with its messages, and an unnamed one does not. */
+    public function test_a_named_omission_is_allowed_and_only_that(): void
+    {
+        $engine = ProtoSchema::parse(<<<'PROTO'
+            service SearchEngineService {
+              rpc Search (SearchQueryRequest) returns (SearchQueryResponse);
+              rpc Internal (InternalRequest) returns (InternalResponse);
+            }
+            message SearchQueryRequest { uint32 limit = 1; }
+            message SearchQueryResponse { uint32 total_matches = 1; }
+            message InternalRequest { }
+            message InternalResponse { uint64 count = 1; }
+            PROTO);
+
+        $vendored = ProtoSchema::parse(<<<'PROTO'
+            service SearchEngineService {
+              rpc Search (SearchQueryRequest) returns (SearchQueryResponse);
+            }
+            message SearchQueryRequest { uint32 limit = 1; }
+            message SearchQueryResponse { uint32 total_matches = 1; }
+            PROTO);
+
+        self::assertSame([], ProtoSchema::subsetDiff($engine, $vendored, ['Internal']));
+        self::assertStringContainsString('Internal', implode("\n", ProtoSchema::subsetDiff($engine, $vendored)));
+    }
+
+    public function test_declares_exactly_the_expected_rpcs(): void
+    {
+        self::assertSame(self::expected()['rpcs'], self::actual()->rpcs);
+    }
+
+    public function test_declares_exactly_the_expected_messages(): void
+    {
+        $expected = array_keys(self::expected()['messages']);
+        $actual = array_keys(self::actual()->messages);
+        sort($expected);
+        sort($actual);
+        self::assertSame($expected, $actual);
+    }
+
+    public function test_every_field_keeps_its_number_and_type(): void
+    {
+        $actual = self::actual();
+        foreach (self::expected()['messages'] as $message => $fields) {
+            self::assertArrayHasKey($message, $actual->messages, "message {$message} is missing");
+            self::assertSame($fields, $actual->messages[$message], "field drift in message {$message}");
+        }
+    }
+
+    public function test_declares_the_expected_enum_values(): void
+    {
+        self::assertSame(self::expected()['enums'], self::actual()->enums);
+    }
+
+    // ---------------------------------------------------------------------
+    // Meta-tests: prove the guard actually bites.
+    //
+    // A schema guard nobody has tried to fool is an assumption, not a guard.
+    // These mutate the proto text in memory, no filesystem, no Docker file
+    // sync, deterministic, and assert that ProtoSchema::diff reports the
+    // drift, or stays silent when nothing structural changed.
+    // ---------------------------------------------------------------------
+
+    /** @return array<string, array{0: string, 1: string, 2: bool, 3: string}> */
+    public static function driftCases(): array
+    {
+        return [
+            'removed field' => [
+                '  uint32 total_matches = 2;',
+                '',
+                true,
+                'lost   2:uint32 total_matches',
+            ],
+            'renumbered field' => [
+                'uint32 total_matches = 2;',
+                'uint32 total_matches = 9;',
+                true,
+                'gained 9:uint32 total_matches',
+            ],
+            'renamed field' => [
+                'uint64 execution_time_us = 3;',
+                'uint64 executionTimeUs = 3;',
+                true,
+                'gained 3:uint64 executionTimeUs',
+            ],
+            'retyped field' => [
+                'uint32 total_matches = 2;',
+                'uint64 total_matches = 2;',
+                true,
+                'gained 2:uint64 total_matches',
+            ],
+            'removed rpc' => [
+                'rpc DeleteEntity (DeleteEntityRequest) returns (DeleteEntityResponse);',
+                '',
+                true,
+                'rpc removed: DeleteEntity',
+            ],
+            'renumbered enum value' => [
+                'MUST_NOT = 2;',
+                'MUST_NOT = 3;',
+                true,
+                'enum FilterPredicate.Operation',
+            ],
+            'comment only' => [
+                '// Tenant / namespace isolation key.',
+                '// reworded, structurally identical',
+                false,
+                '',
+            ],
+        ];
+    }
+
+    #[DataProvider('driftCases')]
+    public function test_guard_detects_drift(
+        string $find,
+        string $replace,
+        bool $expectDrift,
+        string $expectedFragment,
+    ): void {
+        $path = realpath(self::PROTO);
+        self::assertIsString($path);
+        $original = (string) file_get_contents($path);
+
+        self::assertStringContainsString(
+            $find,
+            $original,
+            "the sabotage anchor is stale: proto no longer contains {$find}",
+        );
+
+        $mutated = str_replace($find, $replace, $original);
+        $diff = ProtoSchema::diff(
+            ProtoSchema::parse($original),
+            ProtoSchema::parse($mutated),
+        );
+
+        if (!$expectDrift) {
+            self::assertSame([], $diff, 'a comment-only edit must not register as schema drift');
+
+            return;
+        }
+
+        self::assertNotSame([], $diff, 'the guard did not notice the mutation');
+        self::assertStringContainsString(
+            $expectedFragment,
+            implode("\n", $diff),
+            'the guard noticed drift but did not name it usefully',
+        );
+    }
+
+    public function test_still_carries_the_recovery_fields_the_sdk_reads(): void
+    {
+        // Client::search() reads these by name, so a rename upstream would be
+        // silent at runtime rather than loud.
+        $search = self::actual()->messages['SearchQueryResponse'] ?? [];
+        foreach (self::expected()['messages']['SearchQueryResponse'] as $field) {
+            self::assertContains($field, $search, "SearchQueryResponse lost {$field}");
+        }
+    }
+}

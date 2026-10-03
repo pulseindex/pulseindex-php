@@ -1,0 +1,62 @@
+{
+    "name": "pulseindex/pulseindex-php",
+    "description": "Official PHP client SDK for PulseIndex: hosted search and filtering for large entity sets",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "pulseindex",
+        "grpc",
+        "search",
+        "indexing",
+        "geo",
+        "filtering"
+    ],
+    "authors": [
+        {
+            "name": "PulseIndex"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "ext-grpc": "*",
+        "grpc/grpc": "^1.57",
+        "google/protobuf": "^4.28"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "suggest": {
+        "ext-protobuf": "Google's protobuf C extension. Optional, and faster on queries that carry many predicates, such as a large withinRadius.",
+        "ext-intl": "Required by PulseIndex\\Text: the accent folding uses Normalizer, and without it Text refuses rather than producing tokens that differ from the TypeScript SDK"
+    },
+    "autoload": {
+        "psr-4": {
+            "PulseIndex\\": "src/",
+            "PulseIndex\\Engine\\V1\\": "generated/PulseIndex/Engine/V1/",
+            "GPBMetadata\\PulseIndex\\": "generated/GPBMetadata/PulseIndex/",
+            "Grpc\\Health\\V1\\": "generated/Grpc/Health/V1/",
+            "GPBMetadata\\": "generated/GPBMetadata/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PulseIndex\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "build-proto": "bash scripts/compile-proto.sh",
+        "check:proto": "php scripts/check-proto.php",
+        "test": "phpunit",
+        "test:unit": "phpunit --testsuite Unit",
+        "test:integration": "phpunit --testsuite Integration",
+        "check:proto:ci": "php scripts/check-proto.php --require-engine"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
